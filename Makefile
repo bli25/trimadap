@@ -1,3 +1,8 @@
+ARCH := $(shell arch)
+ifeq ($(ARCH),arm64)
+$(error Unsupported architecture arm64!)
+endif
+
 CC=gcc
 CFLAGS=-g -Wall -O2 -Wno-unused-function
 

@@ -10,6 +10,7 @@
 KSEQ_INIT(gzFile, gzread)
 
 #define VERSION "r12"
+#define basename(str) (strrchr(str, '/') ? strrchr(str, '/') + 1 : str)
 
 /***************
  * CMD options *
@@ -43,6 +44,7 @@ typedef struct {
 typedef struct {
 	int sa, sb, go, ge; // scoring; not exposed to the command line, for now
 	int min_sc, min_len, min_trim_len, min_rlen;
+	char masker;
 	int n_threads;
 	int chunk_size;
 	double max_diff;
@@ -68,6 +70,7 @@ void ta_opt_init(ta_opt_t *opt)
 	memset(opt, 0, sizeof(ta_opt_t));
 	opt->sa = 1, opt->sb = 2, opt->go = 1, opt->ge = 3;
 	opt->min_sc = 15, opt->min_len = 8, opt->min_trim_len = 1000000, opt->min_rlen = 35, opt->max_diff = .15f;
+	opt->masker = 'X';
 	opt->n_threads = 1, opt->chunk_size = 10000000;
 	ta_opt_set_mat(opt->sa, opt->sb, opt->mat);
 }
@@ -232,8 +235,7 @@ static int trim_len(int l_seq, char *seq)
 {
 	int i, n = 0;
 	for (i = 0; i < l_seq; ++i)
-		if (seq[i] == 'X')
-			++n;
+		n += (seq[i] == 'X');
 	return n;
 }
 
@@ -258,7 +260,7 @@ static void worker_for(void *_data, long i, int tid)
 
 static void *worker_pipeline(void *shared, int step, void *_data)
 {
-	int i;
+	int i, j;
 	ta_opt_t *opt = (ta_opt_t*)shared;
 	if (step == 0) {
 		data_for_t *ret;
@@ -284,6 +286,10 @@ static void *worker_pipeline(void *shared, int step, void *_data)
 				putchar(' ');
 				puts(s->comment);
 			} else putchar('\n');
+			if (opt->masker == 'N')
+				for (j = 0; j < s->l_seq; ++j)
+					if (s->seq[j] == 'X')
+						s->seq[j] = 'N';
 			puts(s->seq);
 			if (s->qual) {
 				puts("+"); puts(s->qual);
@@ -305,24 +311,33 @@ int main(int argc, char *argv[])
 	ta_opt_t opt;
 
 	ta_opt_init(&opt);
-	while ((c = getopt(argc, argv, "5:3:s:p:l:t:r:v")) >= 0) {
-		if (c == '5' || c == '3') ta_opt_add_adap(&opt, c - '0', optarg);
+	while ((c = getopt(argc, argv, "5:3:s:p:l:t:r:m:vh")) >= 0) {
+		if (c == 'h') goto usage;
+		else if (c == '5' || c == '3') ta_opt_add_adap(&opt, c - '0', optarg);
 		else if (c == 's') opt.min_sc = atoi(optarg);
 		else if (c == 'd') opt.max_diff = atof(optarg);
 		else if (c == 'l') opt.min_len = atoi(optarg);
 		else if (c == 'p') opt.n_threads = atoi(optarg);
 		else if (c == 't') opt.min_trim_len = atoi(optarg);
 		else if (c == 'r') opt.min_rlen = atoi(optarg);
+		else if (c == 'm') opt.masker = *optarg;
 		else if (c == 'v') {
 			puts(VERSION);
 			return 0;
 		}
 	}
 
+	if (opt.masker != 'X' && opt.masker != 'N')
+	{
+		fprintf(stderr, "Error: Invalid masker character: [%c]\n", opt.masker);
+		exit(1);
+	}
+
 	if (opt.n_adaps == 0) ta_opt_default_adaps(&opt);
 
 	if (optind == argc && isatty(fileno(stdin))) {
-		fprintf(stderr, "Usage: trimadap-mt [options] <in.fq>\n");
+usage:
+		fprintf(stderr, "Usage: \033[1;31m%s\033[0;0m [options] <in.fq>\n", basename(argv[0]));
 		fprintf(stderr, "Options:\n");
 		fprintf(stderr, "  -5 STR     5'-end adapter\n");
 		fprintf(stderr, "  -3 STR     3'-end adapter\n");
@@ -332,6 +347,8 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "  -d FLOAT   max difference [%.3f]\n", opt.max_diff);
 		fprintf(stderr, "  -r INT     min read length (w/ trimmed bases counted out) to output [%d]\n", opt.min_rlen);
 		fprintf(stderr, "  -p INT     number of trimmer threads [%d]\n", opt.n_threads);
+		fprintf(stderr, "  -m CHAR    masker character (X or N) [%c]\n", opt.masker);
+		fprintf(stderr, "  -h         print help message\n");
 		fprintf(stderr, "  -v         print version number\n");
 		return 1; // FIXME: memory leak
 	}
