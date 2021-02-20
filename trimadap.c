@@ -9,7 +9,7 @@
 #include "kseq.h"
 KSEQ_INIT(gzFile, gzread)
 
-#define VERSION "r11"
+#define VERSION "r12"
 
 /***************
  * CMD options *
@@ -42,7 +42,7 @@ typedef struct {
 
 typedef struct {
 	int sa, sb, go, ge; // scoring; not exposed to the command line, for now
-	int min_sc, min_len, min_trim_len;
+	int min_sc, min_len, min_trim_len, min_rlen;
 	int n_threads;
 	int chunk_size;
 	double max_diff;
@@ -67,7 +67,7 @@ void ta_opt_init(ta_opt_t *opt)
 {
 	memset(opt, 0, sizeof(ta_opt_t));
 	opt->sa = 1, opt->sb = 2, opt->go = 1, opt->ge = 3;
-	opt->min_sc = 15, opt->min_len = 8, opt->min_trim_len = 1000000, opt->max_diff = .15f;
+	opt->min_sc = 15, opt->min_len = 8, opt->min_trim_len = 1000000, opt->min_rlen = 35, opt->max_diff = .15f;
 	opt->n_threads = 1, opt->chunk_size = 10000000;
 	ta_opt_set_mat(opt->sa, opt->sb, opt->mat);
 }
@@ -93,10 +93,14 @@ void ta_opt_add_adap(ta_opt_t *opt, int type, const char *adap)
 void ta_opt_default_adaps(ta_opt_t *opt)
 {
 	if (opt->n_adaps) return;
+	// Illumina
 	ta_opt_add_adap(opt, 5, "AATGATACGGCGACCACCGAGATCTACACTCTTTCCCTACACGACGCTCTTCCGATCT");
 	ta_opt_add_adap(opt, 3, "AGATCGGAAGAGCACACGTCTGAACTCCAGTCAC");
 	ta_opt_add_adap(opt, 3, "AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGTAGATCTCGGTGGTCGCCGTATCATT");
 	ta_opt_add_adap(opt, 3, "ATCTCGTATGCCGTCTTCTGCTTG");
+	// DNBSEQ
+	ta_opt_add_adap(opt, 5, "AAGTCGGATCGTAGCCATGTCGTTCTGTGAGCCAAGGAGTTG");
+	ta_opt_add_adap(opt, 3, "AAGTCGGAGGCCAAGCGGTCTTAGGAAGACAA");
 }
 
 void ta_opt_open(ta_opt_t *opt, const char *fn)
@@ -224,6 +228,15 @@ static void apply_trim(int min_trim, int l_seq, char *seq, char *qual)
 	if (qual) qual[l_seq] = 0;
 }
 
+static int trim_len(int l_seq, char *seq)
+{
+	int i, n = 0;
+	for (i = 0; i < l_seq; ++i)
+		if (seq[i] == 'X')
+			++n;
+	return n;
+}
+
 /**********************
  * Callback functions *
  **********************/
@@ -262,6 +275,8 @@ static void *worker_pipeline(void *shared, int step, void *_data)
 		data_for_t *data = (data_for_t*)_data;
 		for (i = 0; i < data->n_seqs; ++i) {
 			bseq1_t *s = &data->seqs[i];
+			if (s->l_seq - trim_len(s->l_seq, s->seq) < opt->min_rlen)
+				continue;
 			if (opt->min_trim_len < s->l_seq)
 				apply_trim(opt->min_trim_len, s->l_seq, s->seq, s->qual);
 			putchar(s->qual? '@' : '>'); fputs(s->name, stdout);
@@ -290,13 +305,14 @@ int main(int argc, char *argv[])
 	ta_opt_t opt;
 
 	ta_opt_init(&opt);
-	while ((c = getopt(argc, argv, "5:3:s:p:l:t:v")) >= 0) {
+	while ((c = getopt(argc, argv, "5:3:s:p:l:t:r:v")) >= 0) {
 		if (c == '5' || c == '3') ta_opt_add_adap(&opt, c - '0', optarg);
 		else if (c == 's') opt.min_sc = atoi(optarg);
 		else if (c == 'd') opt.max_diff = atof(optarg);
 		else if (c == 'l') opt.min_len = atoi(optarg);
 		else if (c == 'p') opt.n_threads = atoi(optarg);
 		else if (c == 't') opt.min_trim_len = atoi(optarg);
+		else if (c == 'r') opt.min_rlen = atoi(optarg);
 		else if (c == 'v') {
 			puts(VERSION);
 			return 0;
@@ -312,8 +328,9 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "  -3 STR     3'-end adapter\n");
 		fprintf(stderr, "  -l INT     min length [%d]\n", opt.min_len);
 		fprintf(stderr, "  -s INT     min score [%d]\n", opt.min_sc);
-		fprintf(stderr, "  -t INT     trim down [don't trim]\n");
+		fprintf(stderr, "  -t INT     trim down masked part (Xs) [don't trim]\n");
 		fprintf(stderr, "  -d FLOAT   max difference [%.3f]\n", opt.max_diff);
+		fprintf(stderr, "  -r INT     min read length (w/ trimmed bases counted out) to output [%d]\n", opt.min_rlen);
 		fprintf(stderr, "  -p INT     number of trimmer threads [%d]\n", opt.n_threads);
 		fprintf(stderr, "  -v         print version number\n");
 		return 1; // FIXME: memory leak

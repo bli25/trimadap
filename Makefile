@@ -1,10 +1,11 @@
 CC=gcc
 CFLAGS=-g -Wall -O2 -Wno-unused-function
 
-all:trimadap-mt
+all:trimadap
 
-trimadap-mt:trimadap-mt.c ksw.c kthread.c kseq.h ksw.h
-		$(CC) $(CFLAGS) -pthread ksw.c kthread.c trimadap-mt.c -o $@ -lz -lm
+trimadap: trimadap.c ksw.c kthread.c
+	$(CC) $(CFLAGS) -pthread $^ -o $@ -lz -lm
+	rm -rf trimadap.dSYM
 
 clean:
-		rm -fr gmon.out *.o ext/*.o a.out seqtk trimadap *~ *.a *.dSYM session* trimadap-mt
+	rm -fr trimadap.dSYM trimadap
