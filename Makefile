@@ -1,16 +1,20 @@
 ARCH := $(shell arch)
 ifeq ($(ARCH),arm64)
 $(error Unsupported architecture arm64!)
+else ifeq ($(ARCH),x86_64)
+CFLAGS=-O3 -march=native -Wno-unused-function
+else
+CFLAGS=-O3 -Wno-unused-function
 endif
 
 CC=gcc
-CFLAGS=-g -Wall -O2 -Wno-unused-function
 
 all:trimadap
 
 trimadap: trimadap.c ksw.c kthread.c
 	$(CC) $(CFLAGS) -pthread $^ -o $@ -lz -lm
-	rm -rf trimadap.dSYM
+	@rm -rf trimadap.dSYM
 
 clean:
-	rm -fr trimadap.dSYM trimadap
+	@rm -fr trimadap.dSYM
+	rm -fr trimadap

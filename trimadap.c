@@ -44,7 +44,7 @@ typedef struct {
 typedef struct {
 	int sa, sb, go, ge; // scoring; not exposed to the command line, for now
 	int min_sc, min_len, min_trim_len, min_rlen;
-	char masker;
+	char mskr;
 	int n_threads;
 	int chunk_size;
 	double max_diff;
@@ -70,7 +70,7 @@ void ta_opt_init(ta_opt_t *opt)
 	memset(opt, 0, sizeof(ta_opt_t));
 	opt->sa = 1, opt->sb = 2, opt->go = 1, opt->ge = 3;
 	opt->min_sc = 15, opt->min_len = 8, opt->min_trim_len = 1000000, opt->min_rlen = 35, opt->max_diff = .15f;
-	opt->masker = 'X';
+	opt->mskr = 'X';
 	opt->n_threads = 1, opt->chunk_size = 10000000;
 	ta_opt_set_mat(opt->sa, opt->sb, opt->mat);
 }
@@ -208,20 +208,20 @@ void ta_trim1(ta_opt_t *opt, char *seq)
 		if (p->type == 5) {
 			k = r.te + (p->len - r.qe);
 			k = k < str->l? k : str->l;
-			for (i = 0; i < k; ++i) seq[i] = 'X';
+			for (i = 0; i < k; ++i) seq[i] = opt->mskr;
 		} else if (p->type == 3) {
 			k = r.tb > r.qb? r.tb - r.qb : 0;
-			for (i = k; i < str->l; ++i) seq[i] = 'X';
+			for (i = k; i < str->l; ++i) seq[i] = opt->mskr;
 		}
 	}
 	free(str->s);
 }
 
-static void apply_trim(int min_trim, int l_seq, char *seq, char *qual)
+static void apply_trim(int min_trim, int l_seq, char *seq, char *qual, char mskr)
 {
 	int i;
-	while (l_seq > min_trim && seq[l_seq-1] == 'X') --l_seq;
-	for (i = 0; l_seq - i > min_trim && seq[i] == 'X';) ++i;
+	while (l_seq > min_trim && seq[l_seq-1] == mskr) --l_seq;
+	for (i = 0; l_seq - i > min_trim && seq[i] == mskr;) ++i;
 	if (i > 0) {
 		memmove(seq, seq + i, l_seq - i + 1);
 		if (qual) memmove(qual, qual + i, l_seq - i + 1);
@@ -231,11 +231,11 @@ static void apply_trim(int min_trim, int l_seq, char *seq, char *qual)
 	if (qual) qual[l_seq] = 0;
 }
 
-static int trim_len(int l_seq, char *seq)
+static int trim_len(const int l_seq, const char *seq, const char mskr)
 {
 	int i, n = 0;
 	for (i = 0; i < l_seq; ++i)
-		n += (seq[i] == 'X');
+		n += (seq[i] == mskr);
 	return n;
 }
 
@@ -260,7 +260,7 @@ static void worker_for(void *_data, long i, int tid)
 
 static void *worker_pipeline(void *shared, int step, void *_data)
 {
-	int i, j;
+	int i;
 	ta_opt_t *opt = (ta_opt_t*)shared;
 	if (step == 0) {
 		data_for_t *ret;
@@ -277,19 +277,15 @@ static void *worker_pipeline(void *shared, int step, void *_data)
 		data_for_t *data = (data_for_t*)_data;
 		for (i = 0; i < data->n_seqs; ++i) {
 			bseq1_t *s = &data->seqs[i];
-			if (s->l_seq - trim_len(s->l_seq, s->seq) < opt->min_rlen)
+			if (s->l_seq - trim_len(s->l_seq, s->seq, opt->mskr) < opt->min_rlen)
 				continue;
 			if (opt->min_trim_len < s->l_seq)
-				apply_trim(opt->min_trim_len, s->l_seq, s->seq, s->qual);
+				apply_trim(opt->min_trim_len, s->l_seq, s->seq, s->qual, opt->mskr);
 			putchar(s->qual? '@' : '>'); fputs(s->name, stdout);
 			if (s->comment) {
 				putchar(' ');
 				puts(s->comment);
 			} else putchar('\n');
-			if (opt->masker == 'N')
-				for (j = 0; j < s->l_seq; ++j)
-					if (s->seq[j] == 'X')
-						s->seq[j] = 'N';
 			puts(s->seq);
 			if (s->qual) {
 				puts("+"); puts(s->qual);
@@ -320,16 +316,16 @@ int main(int argc, char *argv[])
 		else if (c == 'p') opt.n_threads = atoi(optarg);
 		else if (c == 't') opt.min_trim_len = atoi(optarg);
 		else if (c == 'r') opt.min_rlen = atoi(optarg);
-		else if (c == 'm') opt.masker = *optarg;
+		else if (c == 'm') opt.mskr = *optarg;
 		else if (c == 'v') {
 			puts(VERSION);
 			return 0;
 		}
 	}
 
-	if (opt.masker != 'X' && opt.masker != 'N')
+	if (opt.mskr != 'X' && opt.mskr != 'N')
 	{
-		fprintf(stderr, "Error: Invalid masker character: [%c]\n", opt.masker);
+		fprintf(stderr, "Error: Invalid masker character: [%c]\n", opt.mskr);
 		exit(1);
 	}
 
@@ -347,7 +343,7 @@ usage:
 		fprintf(stderr, "  -d FLOAT   max difference [%.3f]\n", opt.max_diff);
 		fprintf(stderr, "  -r INT     min read length (w/ trimmed bases counted out) to output [%d]\n", opt.min_rlen);
 		fprintf(stderr, "  -p INT     number of trimmer threads [%d]\n", opt.n_threads);
-		fprintf(stderr, "  -m CHAR    masker character (X or N) [%c]\n", opt.masker);
+		fprintf(stderr, "  -m CHAR    masker character (X or N) [%c]\n", opt.mskr);
 		fprintf(stderr, "  -h         print help message\n");
 		fprintf(stderr, "  -v         print version number\n");
 		return 1; // FIXME: memory leak
