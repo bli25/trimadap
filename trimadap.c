@@ -1,6 +1,8 @@
+#define __STDC_FORMAT_MACROS 1
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <inttypes.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <assert.h>
@@ -9,7 +11,11 @@
 #include "kseq.h"
 KSEQ_INIT(gzFile, gzread)
 
-#define VERSION "r12"
+#define SEQLEN 256
+#define VERSION "r13"
+#define abs(x) ((x)>0?(x):-(x))
+#define max(x,y) ((x)>(y)?(x):(y))
+#define min(x,y) ((x)>(y)?(y):(x))
 #define basename(str) (strrchr(str, '/') ? strrchr(str, '/') + 1 : str)
 
 /***************
@@ -35,6 +41,28 @@ unsigned char seq_nt4_table[256] = {
 	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4
 };
 
+const int seq_nt16_int[] = { 4, 0, 1, 4, 2, 4, 4, 4, 3, 4, 4, 4, 4, 4, 4, 4 };
+
+const unsigned char seq_nt16_table[256] = {
+    15,15,15,15, 15,15,15,15, 15,15,15,15, 15,15,15,15,
+    15,15,15,15, 15,15,15,15, 15,15,15,15, 15,15,15,15,
+    15,15,15,15, 15,15,15,15, 15,15,15,15, 15,15,15,15,
+     1, 2, 4, 8, 15,15,15,15, 15,15,15,15, 15, 0 /*=*/,15,15,
+    15, 1,14, 2, 13,15,15, 4, 11,15,15,12, 15, 3,15,15,
+    15,15, 5, 6,  8,15, 7, 9, 15,10,15,15, 15,15,15,15,
+    15, 1,14, 2, 13,15,15, 4, 11,15,15,12, 15, 3,15,15,
+    15,15, 5, 6,  8,15, 7, 9, 15,10,15,15, 15,15,15,15,
+
+    15,15,15,15, 15,15,15,15, 15,15,15,15, 15,15,15,15,
+    15,15,15,15, 15,15,15,15, 15,15,15,15, 15,15,15,15,
+    15,15,15,15, 15,15,15,15, 15,15,15,15, 15,15,15,15,
+    15,15,15,15, 15,15,15,15, 15,15,15,15, 15,15,15,15,
+    15,15,15,15, 15,15,15,15, 15,15,15,15, 15,15,15,15,
+    15,15,15,15, 15,15,15,15, 15,15,15,15, 15,15,15,15,
+    15,15,15,15, 15,15,15,15, 15,15,15,15, 15,15,15,15,
+    15,15,15,15, 15,15,15,15, 15,15,15,15, 15,15,15,15
+};
+
 typedef struct {
 	int type, len;
 	uint8_t *seq;
@@ -42,14 +70,19 @@ typedef struct {
 } ta_adap_t;
 
 typedef struct {
+	uint64_t reads, *bases, *quals, q20, q30;
+} qc_sta_t;
+
+typedef struct {
 	int sa, sb, go, ge; // scoring; not exposed to the command line, for now
 	int min_sc, min_len, min_trim_len, min_rlen;
-	char mskr;
+	char mskr, qc;
 	int n_threads;
 	int chunk_size;
 	double max_diff;
 	int n_adaps, m_adaps;
 	ta_adap_t *adaps;
+	qc_sta_t *qcstat;
 	int8_t mat[25];
 	kseq_t *ks;
 } ta_opt_t;
@@ -71,6 +104,11 @@ void ta_opt_init(ta_opt_t *opt)
 	opt->sa = 1, opt->sb = 2, opt->go = 1, opt->ge = 3;
 	opt->min_sc = 15, opt->min_len = 8, opt->min_trim_len = 1000000, opt->min_rlen = 35, opt->max_diff = .15f;
 	opt->mskr = 'X';
+	opt->qc = 0;
+	opt->qcstat = calloc(1, sizeof(qc_sta_t));
+	opt->qcstat->reads = opt->qcstat->q20 = opt->qcstat->q30 = 0;
+	opt->qcstat->bases = calloc(SEQLEN, sizeof(uint64_t));
+	opt->qcstat->quals = calloc(SEQLEN, sizeof(uint64_t));
 	opt->n_threads = 1, opt->chunk_size = 10000000;
 	ta_opt_set_mat(opt->sa, opt->sb, opt->mat);
 }
@@ -122,6 +160,9 @@ void ta_opt_free(ta_opt_t *opt)
 	kseq_destroy(opt->ks);
 	gzclose(fp);
 	free(opt->adaps);
+	free(opt->qcstat->bases);
+	free(opt->qcstat->quals);
+	free(opt->qcstat);
 }
 
 /*************
@@ -239,6 +280,30 @@ static int trim_len(const int l_seq, const char *seq, const char mskr)
 	return n;
 }
 
+static void do_qc(const bseq1_t *s, qc_sta_t *q)
+{
+	int i;
+	++q->reads;
+	for (i = 0; i < s->l_seq; ++i)
+	{
+		++q->bases[seq_nt16_int[seq_nt16_table[s->seq[i]]]];
+		++q->quals[s->qual[i] - 33];
+	}
+}
+
+static void dump_qc(qc_sta_t *q)
+{
+	int i;
+	++q->reads;
+	for (i = 29; i < SEQLEN; ++i) q->q30 += q->quals[i];
+	for (i = 19; i < 29; ++i) q->q20 += q->quals[i];
+	q->q20 += q->q30;
+	fputs("Reads\tBases\tQ20_bases\tQ30_bases\tGC_bases\n", stderr);
+	fprintf(stderr, "%"PRIu64"\t%"PRIu64"\t%"PRIu64"\t%"PRIu64"\t%"PRIu64"\n",
+		q->reads, q->bases[0] + q->bases[1] + q->bases[2] + q->bases[3] + q->bases[4],
+		q->q20, q->q30, q->bases[1] + q->bases[2]);
+}
+
 /**********************
  * Callback functions *
  **********************/
@@ -277,6 +342,7 @@ static void *worker_pipeline(void *shared, int step, void *_data)
 		data_for_t *data = (data_for_t*)_data;
 		for (i = 0; i < data->n_seqs; ++i) {
 			bseq1_t *s = &data->seqs[i];
+			// filter out reads shorter than threshold specified
 			if (s->l_seq - trim_len(s->l_seq, s->seq, opt->mskr) < opt->min_rlen)
 				continue;
 			if (opt->min_trim_len < s->l_seq)
@@ -290,6 +356,8 @@ static void *worker_pipeline(void *shared, int step, void *_data)
 			if (s->qual) {
 				puts("+"); puts(s->qual);
 			}
+			// basic qc
+			if (opt->qc) do_qc(s, opt->qcstat);
 			free(s->seq); free(s->qual); free(s->name); free(s->comment);
 		}
 		free(data->seqs); free(data);
@@ -307,7 +375,7 @@ int main(int argc, char *argv[])
 	ta_opt_t opt;
 
 	ta_opt_init(&opt);
-	while ((c = getopt(argc, argv, "5:3:s:p:l:t:r:m:vh")) >= 0) {
+	while ((c = getopt(argc, argv, "5:3:s:p:l:t:r:m:qvh")) >= 0) {
 		if (c == 'h') goto usage;
 		else if (c == '5' || c == '3') ta_opt_add_adap(&opt, c - '0', optarg);
 		else if (c == 's') opt.min_sc = atoi(optarg);
@@ -317,6 +385,7 @@ int main(int argc, char *argv[])
 		else if (c == 't') opt.min_trim_len = atoi(optarg);
 		else if (c == 'r') opt.min_rlen = atoi(optarg);
 		else if (c == 'm') opt.mskr = *optarg;
+		else if (c == 'q') opt.qc = 1;
 		else if (c == 'v') {
 			puts(VERSION);
 			return 0;
@@ -344,12 +413,13 @@ usage:
 		fprintf(stderr, "  -r INT     min read length (w/ trimmed bases counted out) to output [%d]\n", opt.min_rlen);
 		fprintf(stderr, "  -p INT     number of trimmer threads [%d]\n", opt.n_threads);
 		fprintf(stderr, "  -m CHAR    masker character (X or N) [%c]\n", opt.mskr);
+		fprintf(stderr, "  -q         perform basic qc of trimmed output [false]\n");
 		fprintf(stderr, "  -h         print help message\n");
 		fprintf(stderr, "  -v         print version number\n");
 		return 1; // FIXME: memory leak
 	}
 
-	ta_opt_open(&opt, optind < argc? argv[optind] : 0);
+	ta_opt_open(&opt, optind < argc ? argv[optind] : 0);
 	kt_pipeline(2, worker_pipeline, &opt, 3);
 	for (j = 0; j < opt.n_adaps; ++j) {
 		ta_adap_t *p = &opt.adaps[j];
@@ -357,6 +427,7 @@ usage:
 		for (i = 0; i < p->len; ++i) fputc("ACGTN"[(int)p->seq[i]], stderr);
 		fputc('\n', stderr);
 	}
+	if (opt.qc) dump_qc(opt.qcstat);
 	ta_opt_free(&opt);
 	return 0;
 }
