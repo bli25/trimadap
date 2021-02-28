@@ -24,6 +24,7 @@ future. This should not be hard in principle, but it takes development time.
   `-r` | INT    | min read length (w/ trimmed bases counted out) to output | 35
   `-p` | INT    | number of trimmer threads | 1
   `-m` | CHAR   | masker character (X or N) | X
+  `-q` |        | perform basic fq qc | &nbsp;
   `-h` |        | print help message | &nbsp;
   `-v` |        | print version number |  &nbsp;
 
