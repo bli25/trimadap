@@ -11,12 +11,13 @@
 #include "kseq.h"
 KSEQ_INIT(gzFile, gzread)
 
-#define SEQLEN 256
+#define MAXBQ 64
 #define VERSION "r13"
 #define abs(x) ((x)>0?(x):-(x))
 #define max(x,y) ((x)>(y)?(x):(y))
 #define min(x,y) ((x)>(y)?(y):(x))
 #define basename(str) (strrchr(str, '/') ? strrchr(str, '/') + 1 : str)
+#define PP fprintf(stderr, "%s\t%d\t<%s>\n", __FILE__, __LINE__, __func__);
 
 /***************
  * CMD options *
@@ -107,8 +108,8 @@ void ta_opt_init(ta_opt_t *opt)
 	opt->qc = 0;
 	opt->qcstat = calloc(1, sizeof(qc_sta_t));
 	opt->qcstat->reads = opt->qcstat->q20 = opt->qcstat->q30 = 0;
-	opt->qcstat->bases = calloc(SEQLEN, sizeof(uint64_t));
-	opt->qcstat->quals = calloc(SEQLEN, sizeof(uint64_t));
+	opt->qcstat->bases = calloc(5, sizeof(uint64_t));
+	opt->qcstat->quals = calloc(MAXBQ, sizeof(uint64_t));
 	opt->n_threads = 1, opt->chunk_size = 10000000;
 	ta_opt_set_mat(opt->sa, opt->sb, opt->mat);
 }
@@ -295,7 +296,7 @@ static void dump_qc(qc_sta_t *q)
 {
 	int i;
 	++q->reads;
-	for (i = 29; i < SEQLEN; ++i) q->q30 += q->quals[i];
+	for (i = 29; i < MAXBQ; ++i) q->q30 += q->quals[i];
 	for (i = 19; i < 29; ++i) q->q20 += q->quals[i];
 	q->q20 += q->q30;
 	fputs("Reads\tBases\tQ20_bases\tQ30_bases\tGC_bases\n", stderr);
@@ -373,7 +374,6 @@ int main(int argc, char *argv[])
 {
 	int c, i, j;
 	ta_opt_t opt;
-
 	ta_opt_init(&opt);
 	while ((c = getopt(argc, argv, "5:3:s:p:l:t:r:m:qvh")) >= 0) {
 		if (c == 'h') goto usage;
@@ -391,15 +391,12 @@ int main(int argc, char *argv[])
 			return 0;
 		}
 	}
-
 	if (opt.mskr != 'X' && opt.mskr != 'N')
 	{
 		fprintf(stderr, "Error: Invalid masker character: [%c]\n", opt.mskr);
 		exit(1);
 	}
-
 	if (opt.n_adaps == 0) ta_opt_default_adaps(&opt);
-
 	if (optind == argc && isatty(fileno(stdin))) {
 usage:
 		fprintf(stderr, "Usage: \033[1;31m%s\033[0;0m [options] <in.fq>\n", basename(argv[0]));
@@ -418,7 +415,6 @@ usage:
 		fprintf(stderr, "  -v         print version number\n");
 		return 1; // FIXME: memory leak
 	}
-
 	ta_opt_open(&opt, optind < argc ? argv[optind] : 0);
 	kt_pipeline(2, worker_pipeline, &opt, 3);
 	for (j = 0; j < opt.n_adaps; ++j) {
