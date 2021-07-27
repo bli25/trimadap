@@ -288,7 +288,8 @@ static void do_qc(const bseq1_t *s, qc_sta_t *q)
 	for (i = 0; i < s->l_seq; ++i)
 	{
 		++q->bases[seq_nt16_int[seq_nt16_table[s->seq[i]]]];
-		++q->quals[s->qual[i] - 33];
+		if (s->qual)
+			++q->quals[s->qual[i] - 33];
 	}
 }
 
