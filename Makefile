@@ -12,7 +12,7 @@ CC=gcc
 all:trimadap
 
 trimadap: trimadap.c ksw.c kthread.c
-	$(CC) $(CFLAGS) -pthread $^ -o $@ -lz -lm
+	$(CC) $(CFLAGS) -pthread $^ -o $@ -lisal -lm
 	@rm -rf trimadap.dSYM
 
 clean:

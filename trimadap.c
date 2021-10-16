@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <assert.h>
-#include <zlib.h>
+#include "izlib.h"
 #include "ksw.h"
 #include "kseq.h"
 KSEQ_INIT(gzFile, gzread)
