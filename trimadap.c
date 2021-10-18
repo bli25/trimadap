@@ -12,7 +12,7 @@
 KSEQ_INIT(gzFile, gzread)
 
 #define MAXBQ 64
-#define VERSION "r13"
+#define VERSION "r14"
 #define abs(x) ((x)>0?(x):-(x))
 #define max(x,y) ((x)>(y)?(x):(y))
 #define min(x,y) ((x)>(y)?(y):(x))
