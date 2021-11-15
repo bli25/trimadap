@@ -152,19 +152,69 @@ gzFile gzopen(const char *in, const char *mode)
 
 gzFile gzdopen(int fd, const char *mode)
 {
-	char *path;         /* identifier for error messages */
-	gzFile gz;
-
-	if (fd == -1 || (path = (char *)malloc(7 + 3 * sizeof(int))) == NULL)
+	char path[10];         /* identifier for error messages */
+	if (fd == -1)
 		return NULL;
-#if !defined(NO_snprintf) && !defined(NO_vsnprintf)
-	(void)snprintf(path, 7 + 3 * sizeof(int), "<fd:%d>", fd);
-#else
 	sprintf(path, "<fd:%d>", fd);   /* for debugging */
-#endif
-	gz = gzopen(path, mode);
-	free(path);
-	return gz;
+	gzFile fp = calloc(1, sizeof(gzFile_t));
+	fp->fp = fdopen(fd, mode);
+	if(!fp->fp)
+	{
+		gzclose(fp);
+		return NULL;
+	}
+	fp->mode = strdup(mode);
+	// plain file
+	if(*mode == 'r')
+	{
+		fp->is_plain = !is_gz(fp->fp);
+		if (fp->is_plain) return fp;
+	}
+	// gz file
+	fp->gzip_header = calloc(1, sizeof(struct isal_gzip_header));
+	isal_gzip_header_init(fp->gzip_header);
+	if (*mode == 'r') // read
+	{
+		fp->state = calloc(1, sizeof(struct inflate_state));
+		fp->bufi_size = BUF_SIZE;
+		fp->bufi = malloc(fp->bufi_size * sizeof(uint8_t));
+		isal_inflate_init(fp->state);
+		fp->state->crc_flag = ISAL_GZIP_NO_HDR_VER;
+		fp->state->next_in = fp->bufi;
+		fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
+		int ret = isal_read_gzip_header(fp->state, fp->gzip_header);
+		if(ret != ISAL_DECOMP_OK)
+		{
+			gzclose(fp);
+			return NULL;
+		}
+	}
+	else if (*mode == 'w') // write
+	{
+		fp->gzip_header->os = UNIX; // FIXME auto parse OS
+		fp->gzip_header->time = get_posix_filetime(fp->fp);
+		fp->gzip_header->name = strdup(path); 
+		fp->gzip_header->name_buf_len = strlen(fp->gzip_header->name) + 1;
+		fp->bufo_size = BUF_SIZE;
+		fp->bufo = calloc(fp->bufo_size, sizeof(uint8_t));
+		fp->zstream = calloc(1, sizeof(struct isal_zstream));
+		isal_deflate_init(fp->zstream);
+		fp->zstream->avail_in = 0;
+		fp->zstream->flush = NO_FLUSH;
+		fp->zstream->level = COM_LVL_DEFAULT;
+		fp->zstream->level_buf_size = com_lvls[fp->zstream->level];
+		fp->zstream->level_buf = calloc(fp->zstream->level_buf_size, sizeof(uint8_t));
+		fp->zstream->gzip_flag = IGZIP_GZIP_NO_HDR;
+		fp->zstream->avail_out = fp->bufo_size;
+		fp->zstream->next_out = fp->bufo;
+		int ret = isal_write_gzip_header(fp->zstream, fp->gzip_header);
+		if(ret != ISAL_DECOMP_OK)
+		{
+			gzclose(fp);
+			return NULL;
+		}
+	}
+	return fp;
 }
 
 void gzclose(gzFile fp)
