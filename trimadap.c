@@ -296,7 +296,6 @@ static void do_qc(const bseq1_t *s, qc_sta_t *q)
 static void dump_qc(qc_sta_t *q)
 {
 	int i;
-	++q->reads;
 	for (i = 29; i < MAXBQ; ++i) q->q30 += q->quals[i];
 	for (i = 19; i < 29; ++i) q->q20 += q->quals[i];
 	q->q20 += q->q30;

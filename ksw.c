@@ -26,7 +26,11 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#ifdef __ARM_NEON__
+#include "emmintrin.h"
+#else
 #include <emmintrin.h>
+#endif
 #include "ksw.h"
 
 #ifdef __GNUC__
