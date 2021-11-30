@@ -60,6 +60,7 @@ uint32_t get_posix_filetime(FILE* fp);
 gzFile gzopen(const char *in, const char *mode);
 gzFile gzdopen(int fd, const char *mode);
 int gzread(gzFile fp, void *buf, size_t len);
+int gzread_wood(gzFile fp, void *buf, size_t len);
 int gzwrite(gzFile fp, void *buf, size_t len);
 int set_compress_level(gzFile fp, int level);
 void gzclose(gzFile fp);
@@ -240,6 +241,76 @@ void gzclose(gzFile fp)
 
 int gzread(gzFile fp, void *buf, size_t len)
 {
+	int buf_data_len = 0;
+	if (fp->is_plain && !feof(fp->fp))
+		return fread((uint8_t *)buf, 1, len, fp->fp);
+	// Start reading in compressed data and decompress
+	do
+	{
+		if (!fp->state->avail_in)
+		{
+			fp->state->next_in = fp->bufi;
+			fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
+		}
+		fp->state->next_out = (uint8_t *)buf;
+		fp->state->avail_out = len;
+		if (isal_inflate(fp->state) != ISAL_DECOMP_OK)
+			return -3;
+		buf_data_len = fp->state->next_out - (uint8_t *)buf;
+		if (buf_data_len) return buf_data_len;
+		if (feof(fp->fp) || fp->state->avail_in > 0) break;
+	}
+	while (fp->state->block_state != ISAL_BLOCK_FINISH // while not done
+		&& (!feof(fp->fp) || !fp->state->avail_out)); // and work to do
+
+	// Add the following to look for and decode additional concatenated files
+	if (!feof(fp->fp) && !fp->state->avail_in)
+	{
+		fp->state->next_in = fp->bufi;
+		fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
+	}
+	while (fp->state->avail_in > 0 && fp->state->next_in[0] == 31)
+	{
+		// Look for magic numbers for gzip header. Follows the gzread() decision
+		// whether to treat as trailing junk
+		if (fp->state->avail_in > 1 && fp->state->next_in[1] != 139)
+			break;
+		isal_inflate_reset(fp->state);
+		fp->state->crc_flag = ISAL_GZIP; // Let isal_inflate() process extra headers
+		do
+		{
+			if (!fp->state->avail_in && !feof(fp->fp))
+			{
+				fp->state->next_in = fp->bufi;
+				fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
+			}
+			fp->state->next_out = (uint8_t *)buf;
+			fp->state->avail_out = len;
+			if (isal_inflate(fp->state) != ISAL_DECOMP_OK)
+				return -3;
+			buf_data_len = fp->state->next_out - (uint8_t *)buf;
+			if (buf_data_len) return buf_data_len;
+			if (feof(fp->fp) || fp->state->avail_in > 0) break;
+		} while (fp->state->block_state != ISAL_BLOCK_FINISH
+				&& (!feof(fp->fp) || !fp->state->avail_out));
+		if (!feof(fp->fp) && !fp->state->avail_in)
+		{
+			fp->state->next_in = fp->bufi;
+			fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
+		}
+		fp->state->next_out = (uint8_t *)buf;
+		fp->state->avail_out = len;
+		if (isal_inflate(fp->state) != ISAL_DECOMP_OK)
+			return -3;
+		buf_data_len = fp->state->next_out - (uint8_t *)buf;
+		if (buf_data_len) return buf_data_len;
+	}
+	return buf_data_len;
+}
+
+/*
+int gzread_wood(gzFile fp, void *buf, size_t len)
+{
 	int buf_data_len = 0, ret;
 	if (fp->is_plain)
 	{
@@ -298,6 +369,7 @@ int gzread(gzFile fp, void *buf, size_t len)
 	}
 	return buf_data_len;
 }
+*/
 
 int set_compress_level(gzFile fp, int level)
 {

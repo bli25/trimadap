@@ -26,8 +26,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
-#ifdef __ARM_NEON__
-#include "emmintrin.h"
+#if defined(__aarch64__) || defined(_M_ARM64)
+#include "sse2neon/emmintrin.h"
 #else
 #include <emmintrin.h>
 #endif
