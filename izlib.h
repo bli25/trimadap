@@ -47,10 +47,10 @@ typedef struct
 	struct isal_gzip_header *gzip_header;
 	struct inflate_state *state;
 	struct isal_zstream *zstream;
-	uint8_t *bufi;
-	size_t bufi_size;
-	uint8_t *bufo;
-	size_t bufo_size;
+	uint8_t *buf_in;
+	size_t buf_in_size;
+	uint8_t *buf_out;
+	size_t buf_out_size;
 } gzFile_t;
 
 typedef gzFile_t* gzFile;
@@ -62,6 +62,7 @@ gzFile gzdopen(int fd, const char *mode);
 int gzread(gzFile fp, void *buf, size_t len);
 int gzread_wood(gzFile fp, void *buf, size_t len);
 int gzwrite(gzFile fp, void *buf, size_t len);
+int gzeof(gzFile fp);
 int set_compress_level(gzFile fp, int level);
 void gzclose(gzFile fp);
 
@@ -70,13 +71,13 @@ int is_gz(FILE* fp)
 	if(!fp) return 0;
 	char buf[2];
 	int gzip = 0;
-	if(fread(buf, 1, 2, fp) == 2){
-		if(((int)buf[0] == 0x1f) && ((int)(buf[1]&0xFF) == 0x8b)) gzip = 1;
-	}
+	if(fread(buf, 1, 2, fp) == 2)
+		if(((int)buf[0] == 0x1f) && ((int)(buf[1]&0xFF) == 0x8b))
+			gzip = 1;
 	fseek(fp, 12, SEEK_SET);
-	if(fread(buf, 1, 2, fp) == 2){
-		if((int)buf[0] == 0x42 && (int)(buf[1]&0xFF) == 0x43) gzip = 2;
-	}
+	if(fread(buf, 1, 2, fp) == 2)
+		if((int)buf[0] == 0x42 && (int)(buf[1]&0xFF) == 0x43)
+			gzip = 2;
 	fseek(fp, 0, SEEK_SET);
 	return gzip;
 }
@@ -99,25 +100,21 @@ gzFile gzopen(const char *in, const char *mode)
 	}
 	fp->mode = strdup(mode);
 	// plain file
-	if(*mode == 'r')
-	{
-		fp->is_plain = !is_gz(fp->fp);
-		if (fp->is_plain) return fp;
-	}
+	if(*mode == 'r' && (fp->is_plain = !is_gz(fp->fp)))
+		return fp;
 	// gz file
 	fp->gzip_header = calloc(1, sizeof(struct isal_gzip_header));
 	isal_gzip_header_init(fp->gzip_header);
 	if (*mode == 'r') // read
 	{
 		fp->state = calloc(1, sizeof(struct inflate_state));
-		fp->bufi_size = BUF_SIZE;
-		fp->bufi = malloc(fp->bufi_size * sizeof(uint8_t));
+		fp->buf_in_size = BUF_SIZE;
+		fp->buf_in = malloc(fp->buf_in_size * sizeof(uint8_t));
 		isal_inflate_init(fp->state);
 		fp->state->crc_flag = ISAL_GZIP_NO_HDR_VER;
-		fp->state->next_in = fp->bufi;
-		fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
-		int ret = isal_read_gzip_header(fp->state, fp->gzip_header);
-		if(ret != ISAL_DECOMP_OK)
+		fp->state->next_in = fp->buf_in;
+		fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size, fp->fp);
+		if(isal_read_gzip_header(fp->state, fp->gzip_header) != ISAL_DECOMP_OK)
 		{
 			gzclose(fp);
 			return NULL;
@@ -129,8 +126,8 @@ gzFile gzopen(const char *in, const char *mode)
 		fp->gzip_header->time = get_posix_filetime(fp->fp);
 		fp->gzip_header->name = strdup(in); 
 		fp->gzip_header->name_buf_len = strlen(fp->gzip_header->name) + 1;
-		fp->bufo_size = BUF_SIZE;
-		fp->bufo = calloc(fp->bufo_size, sizeof(uint8_t));
+		fp->buf_out_size = BUF_SIZE;
+		fp->buf_out = calloc(fp->buf_out_size, sizeof(uint8_t));
 		fp->zstream = calloc(1, sizeof(struct isal_zstream));
 		isal_deflate_init(fp->zstream);
 		fp->zstream->avail_in = 0;
@@ -139,10 +136,9 @@ gzFile gzopen(const char *in, const char *mode)
 		fp->zstream->level_buf_size = com_lvls[fp->zstream->level];
 		fp->zstream->level_buf = calloc(fp->zstream->level_buf_size, sizeof(uint8_t));
 		fp->zstream->gzip_flag = IGZIP_GZIP_NO_HDR;
-		fp->zstream->avail_out = fp->bufo_size;
-		fp->zstream->next_out = fp->bufo;
-		int ret = isal_write_gzip_header(fp->zstream, fp->gzip_header);
-		if(ret != ISAL_DECOMP_OK)
+		fp->zstream->avail_out = fp->buf_out_size;
+		fp->zstream->next_out = fp->buf_out;
+		if(isal_write_gzip_header(fp->zstream, fp->gzip_header) != ISAL_DECOMP_OK)
 		{
 			gzclose(fp);
 			return NULL;
@@ -158,33 +154,28 @@ gzFile gzdopen(int fd, const char *mode)
 		return NULL;
 	sprintf(path, "<fd:%d>", fd);   /* for debugging */
 	gzFile fp = calloc(1, sizeof(gzFile_t));
-	fp->fp = fdopen(fd, mode);
-	if(!fp->fp)
+	if(!(fp->fp = fdopen(fd, mode)))
 	{
 		gzclose(fp);
 		return NULL;
 	}
 	fp->mode = strdup(mode);
 	// plain file
-	if(*mode == 'r')
-	{
-		fp->is_plain = !is_gz(fp->fp);
-		if (fp->is_plain) return fp;
-	}
+	if(*mode == 'r' && (fp->is_plain = !is_gz(fp->fp)))
+		return fp;
 	// gz file
 	fp->gzip_header = calloc(1, sizeof(struct isal_gzip_header));
 	isal_gzip_header_init(fp->gzip_header);
 	if (*mode == 'r') // read
 	{
 		fp->state = calloc(1, sizeof(struct inflate_state));
-		fp->bufi_size = BUF_SIZE;
-		fp->bufi = malloc(fp->bufi_size * sizeof(uint8_t));
+		fp->buf_in_size = BUF_SIZE;
+		fp->buf_in = malloc(fp->buf_in_size * sizeof(uint8_t));
 		isal_inflate_init(fp->state);
 		fp->state->crc_flag = ISAL_GZIP_NO_HDR_VER;
-		fp->state->next_in = fp->bufi;
-		fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
-		int ret = isal_read_gzip_header(fp->state, fp->gzip_header);
-		if(ret != ISAL_DECOMP_OK)
+		fp->state->next_in = fp->buf_in;
+		fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size, fp->fp);
+		if(isal_read_gzip_header(fp->state, fp->gzip_header) != ISAL_DECOMP_OK)
 		{
 			gzclose(fp);
 			return NULL;
@@ -196,8 +187,8 @@ gzFile gzdopen(int fd, const char *mode)
 		fp->gzip_header->time = get_posix_filetime(fp->fp);
 		fp->gzip_header->name = strdup(path); 
 		fp->gzip_header->name_buf_len = strlen(fp->gzip_header->name) + 1;
-		fp->bufo_size = BUF_SIZE;
-		fp->bufo = calloc(fp->bufo_size, sizeof(uint8_t));
+		fp->buf_out_size = BUF_SIZE;
+		fp->buf_out = calloc(fp->buf_out_size, sizeof(uint8_t));
 		fp->zstream = calloc(1, sizeof(struct isal_zstream));
 		isal_deflate_init(fp->zstream);
 		fp->zstream->avail_in = 0;
@@ -206,10 +197,9 @@ gzFile gzdopen(int fd, const char *mode)
 		fp->zstream->level_buf_size = com_lvls[fp->zstream->level];
 		fp->zstream->level_buf = calloc(fp->zstream->level_buf_size, sizeof(uint8_t));
 		fp->zstream->gzip_flag = IGZIP_GZIP_NO_HDR;
-		fp->zstream->avail_out = fp->bufo_size;
-		fp->zstream->next_out = fp->bufo;
-		int ret = isal_write_gzip_header(fp->zstream, fp->gzip_header);
-		if(ret != ISAL_DECOMP_OK)
+		fp->zstream->avail_out = fp->buf_out_size;
+		fp->zstream->next_out = fp->buf_out;
+		if(isal_write_gzip_header(fp->zstream, fp->gzip_header) != ISAL_DECOMP_OK)
 		{
 			gzclose(fp);
 			return NULL;
@@ -229,8 +219,8 @@ void gzclose(gzFile fp)
 		free(fp->gzip_header);
 	}
 	if(fp->state) free(fp->state);
-	if(fp->bufi) free(fp->bufi);
-	if(fp->bufo) free(fp->bufo);
+	if(fp->buf_in) free(fp->buf_in);
+	if(fp->buf_out) free(fp->buf_out);
 	if(fp->zstream){
 		if(fp->zstream->level_buf) free(fp->zstream->level_buf);
 		free(fp->zstream);
@@ -244,71 +234,66 @@ int gzread(gzFile fp, void *buf, size_t len)
 	int buf_data_len = 0;
 	if (fp->is_plain && !feof(fp->fp))
 		return fread((uint8_t *)buf, 1, len, fp->fp);
-	// Start reading in compressed data and decompress
-	do
+	do // Start reading in compressed data and decompress
 	{
 		if (!fp->state->avail_in)
 		{
-			fp->state->next_in = fp->bufi;
-			fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
+			fp->state->next_in = fp->buf_in;
+			fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size, fp->fp);
 		}
 		fp->state->next_out = (uint8_t *)buf;
 		fp->state->avail_out = len;
 		if (isal_inflate(fp->state) != ISAL_DECOMP_OK)
 			return -3;
-		buf_data_len = fp->state->next_out - (uint8_t *)buf;
-		if (buf_data_len) return buf_data_len;
-		if (feof(fp->fp) || fp->state->avail_in > 0) break;
-	}
-	while (fp->state->block_state != ISAL_BLOCK_FINISH // while not done
+		if ((buf_data_len = fp->state->next_out - (uint8_t *)buf))
+			return buf_data_len;
+	} while (fp->state->block_state != ISAL_BLOCK_FINISH // while not done
 		&& (!feof(fp->fp) || !fp->state->avail_out)); // and work to do
-
 	// Add the following to look for and decode additional concatenated files
 	if (!feof(fp->fp) && !fp->state->avail_in)
 	{
-		fp->state->next_in = fp->bufi;
-		fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
+		fp->state->next_in = fp->buf_in;
+		fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size, fp->fp);
 	}
-	while (fp->state->avail_in > 0 && fp->state->next_in[0] == 31)
+	while (fp->state->avail_in > 0 && fp->state->next_in[0] == 31) // 0x1f
 	{
 		// Look for magic numbers for gzip header. Follows the gzread() decision
 		// whether to treat as trailing junk
-		if (fp->state->avail_in > 1 && fp->state->next_in[1] != 139)
+		if (fp->state->avail_in > 1 && fp->state->next_in[1] != 139) // 0x8b
 			break;
 		isal_inflate_reset(fp->state);
 		fp->state->crc_flag = ISAL_GZIP; // Let isal_inflate() process extra headers
 		do
 		{
-			if (!fp->state->avail_in && !feof(fp->fp))
+			if (!feof(fp->fp) && !fp->state->avail_in)
 			{
-				fp->state->next_in = fp->bufi;
-				fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
+				fp->state->next_in = fp->buf_in;
+				fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size, fp->fp);
 			}
 			fp->state->next_out = (uint8_t *)buf;
 			fp->state->avail_out = len;
 			if (isal_inflate(fp->state) != ISAL_DECOMP_OK)
 				return -3;
-			buf_data_len = fp->state->next_out - (uint8_t *)buf;
-			if (buf_data_len) return buf_data_len;
-			if (feof(fp->fp) || fp->state->avail_in > 0) break;
+			if((buf_data_len = fp->state->next_out - (uint8_t *)buf))
+				return buf_data_len;
 		} while (fp->state->block_state != ISAL_BLOCK_FINISH
 				&& (!feof(fp->fp) || !fp->state->avail_out));
 		if (!feof(fp->fp) && !fp->state->avail_in)
 		{
-			fp->state->next_in = fp->bufi;
-			fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
+			fp->state->next_in = fp->buf_in;
+			fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size, fp->fp);
 		}
 		fp->state->next_out = (uint8_t *)buf;
 		fp->state->avail_out = len;
 		if (isal_inflate(fp->state) != ISAL_DECOMP_OK)
 			return -3;
-		buf_data_len = fp->state->next_out - (uint8_t *)buf;
-		if (buf_data_len) return buf_data_len;
+		if ((buf_data_len = fp->state->next_out - (uint8_t *)buf))
+			return buf_data_len;
 	}
 	return buf_data_len;
 }
 
-/*
+// This function failed to read some large concatenated-gzips file
 int gzread_wood(gzFile fp, void *buf, size_t len)
 {
 	int buf_data_len = 0, ret;
@@ -322,8 +307,8 @@ int gzread_wood(gzFile fp, void *buf, size_t len)
 		if (feof(fp->fp) && !fp->state->avail_in) return buf_data_len;
 		if (!fp->state->avail_in)
 		{
-			fp->state->next_in = fp->bufi;
-			fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size, fp->fp);
+			fp->state->next_in = fp->buf_in;
+			fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size, fp->fp);
 		}
 		fp->state->next_out = (uint8_t *)buf;
 		fp->state->avail_out = len;
@@ -339,8 +324,8 @@ int gzread_wood(gzFile fp, void *buf, size_t len)
 			if (fp->state->avail_in == 0)
 			{
 				isal_inflate_reset(fp->state);
-				fp->state->next_in = fp->bufi;
-				fp->state->avail_in = fread(fp->state->next_in, 1, fp->bufi_size,
+				fp->state->next_in = fp->buf_in;
+				fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size,
 						fp->fp);
 			}
 			else if (fp->state->avail_in >= HDR_SIZE)
@@ -354,13 +339,13 @@ int gzread_wood(gzFile fp, void *buf, size_t len)
 			else
 			{
 				size_t old_avail_in = fp->state->avail_in;
-				memmove(fp->bufi, fp->state->next_in, fp->state->avail_in);
+				memmove(fp->buf_in, fp->state->next_in, fp->state->avail_in);
 				size_t added = 0;
 				if (!feof(fp->fp))
-					added = fread(fp->bufi + fp->state->avail_in, 1,
-							fp->bufi_size - fp->state->avail_in, fp->fp);
+					added = fread(fp->buf_in + fp->state->avail_in, 1,
+							fp->buf_in_size - fp->state->avail_in, fp->fp);
 				isal_inflate_reset(fp->state);
-				fp->state->next_in = fp->bufi;
+				fp->state->next_in = fp->buf_in;
 				fp->state->avail_in = old_avail_in + added;
 			}
 			if ((ret = isal_read_gzip_header(fp->state, fp->gzip_header)) != ISAL_DECOMP_OK)
@@ -369,7 +354,6 @@ int gzread_wood(gzFile fp, void *buf, size_t len)
 	}
 	return buf_data_len;
 }
-*/
 
 int set_compress_level(gzFile fp, int level)
 {
@@ -395,15 +379,22 @@ int gzwrite(gzFile fp, void *buf, size_t _len)
 	{
 		if(!fp->zstream->next_out)
 		{
-			fp->zstream->next_out = fp->bufo;
-			fp->zstream->avail_out = fp->bufo_size;
+			fp->zstream->next_out = fp->buf_out;
+			fp->zstream->avail_out = fp->buf_out_size;
 		}
 		int ret = isal_deflate(fp->zstream);
 		if (ret != ISAL_DECOMP_OK) return -3;
-		len += fwrite(fp->bufo, 1, fp->zstream->next_out - fp->bufo, fp->fp);
+		len += fwrite(fp->buf_out, 1, fp->zstream->next_out - fp->buf_out, fp->fp);
 		fp->zstream->next_out = NULL;
 	} while (!fp->zstream->avail_out);
 	return len;
+}
+
+int gzeof(gzFile fp)
+{
+    if(!fp) return 0;
+    if(fp->_mode[0] != 'w' || fp->_mode[0] != 'r') return 0;
+    return fp->_mode[0] == 'r' ? feof(fp->fp) : 0;
 }
 
 #endif

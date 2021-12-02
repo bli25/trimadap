@@ -2,7 +2,7 @@ ARCH := $(shell arch)
 ifeq ($(ARCH),arm64)
 #$(error Unsupported architecture arm64!)
 else ifeq ($(ARCH),x86_64)
-CFLAGS=-O3 -march=native -Wno-unused-function
+CFLAGS=-O3 -march=native -Wno-unused-function -static
 else
 CFLAGS=-O3 -Wno-unused-function
 endif
