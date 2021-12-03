@@ -232,8 +232,12 @@ void gzclose(gzFile fp)
 int gzread(gzFile fp, void *buf, size_t len)
 {
 	int buf_data_len = 0;
-	if (fp->is_plain && !feof(fp->fp))
-		return fread((uint8_t *)buf, 1, len, fp->fp);
+	if (fp->is_plain)
+	{
+		if(!feof(fp->fp))
+			buf_data_len = fread((uint8_t *)buf, 1, len, fp->fp);
+		return buf_data_len;
+	}
 	do // Start reading in compressed data and decompress
 	{
 		if (!fp->state->avail_in)
