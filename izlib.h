@@ -293,68 +293,6 @@ int gzread(gzFile fp, void *buf, size_t len)
 	return buf_data_len;
 }
 
-// This function failed to read some large concatenated-gzips file
-int gzread_wood(gzFile fp, void *buf, size_t len)
-{
-	int buf_data_len = 0, ret;
-	if (fp->is_plain)
-	{
-		if(!feof(fp->fp)) buf_data_len = fread((uint8_t *)buf, 1, len, fp->fp);
-		return buf_data_len;
-	}
-	while (buf_data_len == 0)
-	{
-		if (feof(fp->fp) && !fp->state->avail_in) return buf_data_len;
-		if (!fp->state->avail_in)
-		{
-			fp->state->next_in = fp->buf_in;
-			fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size, fp->fp);
-		}
-		fp->state->next_out = (uint8_t *)buf;
-		fp->state->avail_out = len;
-		int ret = isal_inflate(fp->state);
-		if (ret != ISAL_DECOMP_OK) return -3;
-		buf_data_len = fp->state->next_out - (uint8_t *)buf;
-		if (feof(fp->fp) || fp->state->avail_in > 0) break;
-	}
-	if (fp->state->block_state == ISAL_BLOCK_FINISH)
-	{
-		if (!feof(fp->fp) || fp->state->avail_in > 0)
-		{
-			if (fp->state->avail_in == 0)
-			{
-				isal_inflate_reset(fp->state);
-				fp->state->next_in = fp->buf_in;
-				fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size,
-						fp->fp);
-			}
-			else if (fp->state->avail_in >= HDR_SIZE)
-			{
-				uint8_t *old_next_in = fp->state->next_in;
-				size_t old_avail_in = fp->state->avail_in;
-				isal_inflate_reset(fp->state);
-				fp->state->avail_in = old_avail_in;
-				fp->state->next_in = old_next_in;
-			}
-			else
-			{
-				size_t old_avail_in = fp->state->avail_in;
-				memmove(fp->buf_in, fp->state->next_in, fp->state->avail_in);
-				size_t added = 0;
-				if (!feof(fp->fp))
-					added = fread(fp->buf_in + fp->state->avail_in, 1,
-							fp->buf_in_size - fp->state->avail_in, fp->fp);
-				isal_inflate_reset(fp->state);
-				fp->state->next_in = fp->buf_in;
-				fp->state->avail_in = old_avail_in + added;
-			}
-			if ((ret = isal_read_gzip_header(fp->state, fp->gzip_header)) != ISAL_DECOMP_OK)
-				return -3;
-		}
-	}
-	return buf_data_len;
-}
-
 int set_compress_level(gzFile fp, int level)
 {
 	if (!fp || !fp->mode || *fp->mode != 'w') return -1;
@@ -393,8 +331,8 @@ int gzwrite(gzFile fp, void *buf, size_t _len)
 int gzeof(gzFile fp)
 {
     if(!fp) return 0;
-    if(fp->_mode[0] != 'w' || fp->_mode[0] != 'r') return 0;
-    return fp->_mode[0] == 'r' ? feof(fp->fp) : 0;
+    if(fp->mode[0] != 'w' || fp->mode[0] != 'r') return 0;
+    return fp->mode[0] == 'r' ? feof(fp->fp) : 0;
 }
 
 #endif
