@@ -60,7 +60,6 @@ uint32_t get_posix_filetime(FILE* fp);
 gzFile gzopen(const char *in, const char *mode);
 gzFile gzdopen(int fd, const char *mode);
 int gzread(gzFile fp, void *buf, size_t len);
-int gzread_wood(gzFile fp, void *buf, size_t len);
 int gzwrite(gzFile fp, void *buf, size_t len);
 int gzeof(gzFile fp);
 int set_compress_level(gzFile fp, int level);
@@ -124,7 +123,7 @@ gzFile gzopen(const char *in, const char *mode)
 	{
 		fp->gzip_header->os = UNIX; // FIXME auto parse OS
 		fp->gzip_header->time = get_posix_filetime(fp->fp);
-		fp->gzip_header->name = strdup(in); 
+		fp->gzip_header->name = strdup(in);
 		fp->gzip_header->name_buf_len = strlen(fp->gzip_header->name) + 1;
 		fp->buf_out_size = BUF_SIZE;
 		fp->buf_out = calloc(fp->buf_out_size, sizeof(uint8_t));
@@ -185,7 +184,7 @@ gzFile gzdopen(int fd, const char *mode)
 	{
 		fp->gzip_header->os = UNIX; // FIXME auto parse OS
 		fp->gzip_header->time = get_posix_filetime(fp->fp);
-		fp->gzip_header->name = strdup(path); 
+		fp->gzip_header->name = strdup(path);
 		fp->gzip_header->name_buf_len = strlen(fp->gzip_header->name) + 1;
 		fp->buf_out_size = BUF_SIZE;
 		fp->buf_out = calloc(fp->buf_out_size, sizeof(uint8_t));
@@ -282,17 +281,6 @@ int gzread(gzFile fp, void *buf, size_t len)
 				return buf_data_len;
 		} while (fp->state->block_state != ISAL_BLOCK_FINISH
 				&& (!feof(fp->fp) || !fp->state->avail_out));
-		if (!feof(fp->fp) && !fp->state->avail_in)
-		{
-			fp->state->next_in = fp->buf_in;
-			fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size, fp->fp);
-		}
-		fp->state->next_out = (uint8_t *)buf;
-		fp->state->avail_out = len;
-		if (isal_inflate(fp->state) != ISAL_DECOMP_OK)
-			return -3;
-		if ((buf_data_len = fp->state->next_out - (uint8_t *)buf))
-			return buf_data_len;
 	}
 	return buf_data_len;
 }
