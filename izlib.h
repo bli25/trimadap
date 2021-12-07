@@ -258,7 +258,7 @@ int gzread(gzFile fp, void *buf, size_t len)
 		fp->state->next_in = fp->buf_in;
 		fp->state->avail_in = fread(fp->state->next_in, 1, fp->buf_in_size, fp->fp);
 	}
-	while (fp->state->avail_in > 0 && fp->state->next_in[0] == 31) // 0x1f
+	while (fp->state->avail_in && fp->state->next_in[0] == 31) // 0x1f
 	{
 		// Look for magic numbers for gzip header. Follows the gzread() decision
 		// whether to treat as trailing junk
