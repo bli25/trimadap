@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <unistd.h>
 #include <stdint.h>
 #include <assert.h>
@@ -12,7 +13,7 @@
 KSEQ_INIT(gzFile, gzread)
 
 #define MAXBQ 64
-#define VERSION "r14"
+#define VERSION "r15"
 #define abs(x) ((x)>0?(x):-(x))
 #define max(x,y) ((x)>(y)?(x):(y))
 #define min(x,y) ((x)>(y)?(y):(x))
@@ -77,6 +78,7 @@ typedef struct {
 typedef struct {
 	int sa, sb, go, ge; // scoring; not exposed to the command line, for now
 	int min_sc, min_len, min_trim_len, min_rlen;
+	unsigned sl; // selected length to output
 	char mskr, qc;
 	int n_threads;
 	int chunk_size;
@@ -104,6 +106,7 @@ void ta_opt_init(ta_opt_t *opt)
 	memset(opt, 0, sizeof(ta_opt_t));
 	opt->sa = 1, opt->sb = 2, opt->go = 1, opt->ge = 3;
 	opt->min_sc = 15, opt->min_len = 8, opt->min_trim_len = 1000000, opt->min_rlen = 35, opt->max_diff = .15f;
+	opt->sl = UINT_MAX;
 	opt->mskr = 'X';
 	opt->qc = 0;
 	opt->qcstat = calloc(1, sizeof(qc_sta_t));
@@ -353,6 +356,12 @@ static void *worker_pipeline(void *shared, int step, void *_data)
 				putchar(' ');
 				puts(s->comment);
 			} else putchar('\n');
+			if (s->l_seq > opt->sl) // select first n bases
+			{
+				s->seq[opt->sl] = '\0';
+				s->qual[opt->sl] = '\0';
+				s->l_seq = opt->sl;
+			}
 			puts(s->seq);
 			if (s->qual) {
 				puts("+"); puts(s->qual);
@@ -375,7 +384,7 @@ int main(int argc, char *argv[])
 	int c, i, j;
 	ta_opt_t opt;
 	ta_opt_init(&opt);
-	while ((c = getopt(argc, argv, "5:3:s:p:l:t:r:m:qvh")) >= 0) {
+	while ((c = getopt(argc, argv, "5:3:s:p:l:t:r:m:n:qvh")) >= 0) {
 		if (c == 'h') goto usage;
 		else if (c == '5' || c == '3') ta_opt_add_adap(&opt, c - '0', optarg);
 		else if (c == 's') opt.min_sc = atoi(optarg);
@@ -385,11 +394,22 @@ int main(int argc, char *argv[])
 		else if (c == 't') opt.min_trim_len = atoi(optarg);
 		else if (c == 'r') opt.min_rlen = atoi(optarg);
 		else if (c == 'm') opt.mskr = *optarg;
+		else if (c == 'n') opt.sl = atoi(optarg);
 		else if (c == 'q') opt.qc = 1;
 		else if (c == 'v') {
 			puts(VERSION);
 			return 0;
 		}
+		else
+		{
+			puts("Invalid option");
+			return 0;
+		}
+	}
+	if (!opt.sl)
+	{
+		fprintf(stderr, "Error: Invalid sequence length via -n: [%d]\n", opt.sl);
+		exit(1);
 	}
 	if (opt.mskr != 'X' && opt.mskr != 'N')
 	{
@@ -407,9 +427,10 @@ usage:
 		fprintf(stderr, "  -s INT     min score [%d]\n", opt.min_sc);
 		fprintf(stderr, "  -t INT     trim down masked part (Xs) [don't trim]\n");
 		fprintf(stderr, "  -d FLOAT   max difference [%.3f]\n", opt.max_diff);
-		fprintf(stderr, "  -r INT     min read length (w/ trimmed bases counted out) to output [%d]\n", opt.min_rlen);
+		fprintf(stderr, "  -r INT     min read length (w/o trimmed) to output [%d]\n", opt.min_rlen);
 		fprintf(stderr, "  -p INT     number of trimmer threads [%d]\n", opt.n_threads);
 		fprintf(stderr, "  -m CHAR    masker character (X or N) [%c]\n", opt.mskr);
+		fprintf(stderr, "  -n INT     first n bases to keep [all]\n");
 		fprintf(stderr, "  -q         perform basic qc of trimmed output [false]\n");
 		fprintf(stderr, "  -h         print help message\n");
 		fprintf(stderr, "  -v         print version number\n");
