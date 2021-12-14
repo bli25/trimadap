@@ -55,6 +55,9 @@ typedef struct
 
 typedef gzFile_t* gzFile;
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 int is_gz(FILE* fp);
 uint32_t get_posix_filetime(FILE* fp);
 gzFile gzopen(const char *in, const char *mode);
@@ -64,6 +67,9 @@ int gzwrite(gzFile fp, void *buf, size_t len);
 int gzeof(gzFile fp);
 int set_compress_level(gzFile fp, int level);
 void gzclose(gzFile fp);
+#ifdef __cplusplus
+}
+#endif
 
 int is_gz(FILE* fp)
 {
@@ -90,7 +96,7 @@ uint32_t get_posix_filetime(FILE* fp)
 
 gzFile gzopen(const char *in, const char *mode)
 {
-	gzFile fp = calloc(1, sizeof(gzFile_t));
+	gzFile fp = (gzFile_t *)calloc(1, sizeof(gzFile_t));
 	fp->fp = fopen(in, mode);
 	if(!fp->fp)
 	{
@@ -102,13 +108,13 @@ gzFile gzopen(const char *in, const char *mode)
 	if(*mode == 'r' && (fp->is_plain = !is_gz(fp->fp)))
 		return fp;
 	// gz file
-	fp->gzip_header = calloc(1, sizeof(struct isal_gzip_header));
+	fp->gzip_header = (isal_gzip_header *)calloc(1, sizeof(struct isal_gzip_header));
 	isal_gzip_header_init(fp->gzip_header);
 	if (*mode == 'r') // read
 	{
-		fp->state = calloc(1, sizeof(struct inflate_state));
+		fp->state = (struct inflate_state *)calloc(1, sizeof(struct inflate_state));
 		fp->buf_in_size = BUF_SIZE;
-		fp->buf_in = malloc(fp->buf_in_size * sizeof(uint8_t));
+		fp->buf_in = (uint8_t *)malloc(fp->buf_in_size * sizeof(uint8_t));
 		isal_inflate_init(fp->state);
 		fp->state->crc_flag = ISAL_GZIP_NO_HDR_VER;
 		fp->state->next_in = fp->buf_in;
@@ -126,14 +132,14 @@ gzFile gzopen(const char *in, const char *mode)
 		fp->gzip_header->name = strdup(in);
 		fp->gzip_header->name_buf_len = strlen(fp->gzip_header->name) + 1;
 		fp->buf_out_size = BUF_SIZE;
-		fp->buf_out = calloc(fp->buf_out_size, sizeof(uint8_t));
-		fp->zstream = calloc(1, sizeof(struct isal_zstream));
+		fp->buf_out = (uint8_t *)calloc(fp->buf_out_size, sizeof(uint8_t));
+		fp->zstream = (struct isal_zstream *)calloc(1, sizeof(struct isal_zstream));
 		isal_deflate_init(fp->zstream);
 		fp->zstream->avail_in = 0;
 		fp->zstream->flush = NO_FLUSH;
 		fp->zstream->level = COM_LVL_DEFAULT;
 		fp->zstream->level_buf_size = com_lvls[fp->zstream->level];
-		fp->zstream->level_buf = calloc(fp->zstream->level_buf_size, sizeof(uint8_t));
+		fp->zstream->level_buf = (uint8_t *)calloc(fp->zstream->level_buf_size, sizeof(uint8_t));
 		fp->zstream->gzip_flag = IGZIP_GZIP_NO_HDR;
 		fp->zstream->avail_out = fp->buf_out_size;
 		fp->zstream->next_out = fp->buf_out;
@@ -152,7 +158,7 @@ gzFile gzdopen(int fd, const char *mode)
 	if (fd == -1)
 		return NULL;
 	sprintf(path, "<fd:%d>", fd);   /* for debugging */
-	gzFile fp = calloc(1, sizeof(gzFile_t));
+	gzFile fp = (gzFile_t *)calloc(1, sizeof(gzFile_t));
 	if(!(fp->fp = fdopen(fd, mode)))
 	{
 		gzclose(fp);
@@ -163,13 +169,13 @@ gzFile gzdopen(int fd, const char *mode)
 	if(*mode == 'r' && (fp->is_plain = !is_gz(fp->fp)))
 		return fp;
 	// gz file
-	fp->gzip_header = calloc(1, sizeof(struct isal_gzip_header));
+	fp->gzip_header = (struct isal_gzip_header *)calloc(1, sizeof(struct isal_gzip_header));
 	isal_gzip_header_init(fp->gzip_header);
 	if (*mode == 'r') // read
 	{
-		fp->state = calloc(1, sizeof(struct inflate_state));
+		fp->state = (struct inflate_state *)calloc(1, sizeof(struct inflate_state));
 		fp->buf_in_size = BUF_SIZE;
-		fp->buf_in = malloc(fp->buf_in_size * sizeof(uint8_t));
+		fp->buf_in = (uint8_t *)malloc(fp->buf_in_size * sizeof(uint8_t));
 		isal_inflate_init(fp->state);
 		fp->state->crc_flag = ISAL_GZIP_NO_HDR_VER;
 		fp->state->next_in = fp->buf_in;
@@ -187,14 +193,14 @@ gzFile gzdopen(int fd, const char *mode)
 		fp->gzip_header->name = strdup(path);
 		fp->gzip_header->name_buf_len = strlen(fp->gzip_header->name) + 1;
 		fp->buf_out_size = BUF_SIZE;
-		fp->buf_out = calloc(fp->buf_out_size, sizeof(uint8_t));
-		fp->zstream = calloc(1, sizeof(struct isal_zstream));
+		fp->buf_out = (uint8_t *)calloc(fp->buf_out_size, sizeof(uint8_t));
+		fp->zstream = (struct isal_zstream *)calloc(1, sizeof(struct isal_zstream));
 		isal_deflate_init(fp->zstream);
 		fp->zstream->avail_in = 0;
 		fp->zstream->flush = NO_FLUSH;
 		fp->zstream->level = COM_LVL_DEFAULT;
 		fp->zstream->level_buf_size = com_lvls[fp->zstream->level];
-		fp->zstream->level_buf = calloc(fp->zstream->level_buf_size, sizeof(uint8_t));
+		fp->zstream->level_buf = (uint8_t *)calloc(fp->zstream->level_buf_size, sizeof(uint8_t));
 		fp->zstream->gzip_flag = IGZIP_GZIP_NO_HDR;
 		fp->zstream->avail_out = fp->buf_out_size;
 		fp->zstream->next_out = fp->buf_out;
@@ -293,7 +299,7 @@ int set_compress_level(gzFile fp, int level)
 	{
 		fp->zstream->level = level;
 		fp->zstream->level_buf_size = com_lvls[fp->zstream->level];
-		fp->zstream->level_buf = realloc(fp->zstream->level_buf,
+		fp->zstream->level_buf = (uint8_t *)realloc(fp->zstream->level_buf,
 				fp->zstream->level_buf_size * sizeof(uint8_t));
 	}
 	return 0;
