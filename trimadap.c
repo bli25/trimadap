@@ -359,7 +359,8 @@ static void *worker_pipeline(void *shared, int step, void *_data)
 			if (s->l_seq > opt->sl) // select first n bases
 			{
 				s->seq[opt->sl] = '\0';
-				s->qual[opt->sl] = '\0';
+				if (s->qual)
+					s->qual[opt->sl] = '\0';
 				s->l_seq = opt->sl;
 			}
 			puts(s->seq);

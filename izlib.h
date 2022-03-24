@@ -108,7 +108,7 @@ gzFile gzopen(const char *in, const char *mode)
 	if(*mode == 'r' && (fp->is_plain = !is_gz(fp->fp)))
 		return fp;
 	// gz file
-	fp->gzip_header = (isal_gzip_header *)calloc(1, sizeof(struct isal_gzip_header));
+	fp->gzip_header = (struct isal_gzip_header *)calloc(1, sizeof(struct isal_gzip_header));
 	isal_gzip_header_init(fp->gzip_header);
 	if (*mode == 'r') // read
 	{
